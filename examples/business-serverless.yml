@@ -1,0 +1,16 @@
+# Fragmento para incorporar en el stack del API REST de negocio, misma cuenta/región.
+# No desplegar este ejemplo aislado: el handler pertenece al servicio de negocio.
+functions:
+  consultarRecurso:
+    handler: handler.consultar_recurso
+    events:
+      - http:
+          path: recursos/{id}
+          method: get
+          authorizer:
+            arn: ${cf:ms-auth-${sls:stage}.AuthorizerArn}
+            type: token
+            identitySource: method.request.header.Authorization
+            resultTtlInSeconds: 0
+# Serverless crea AWS::Lambda::Permission para el Authorizer externo.
+# No configurar managedExternally: true salvo que el permiso ya esté administrado.

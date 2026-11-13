@@ -1,0 +1,158 @@
+service: ms-auth
+frameworkVersion: '3'
+configValidationMode: error
+plugins:
+  - ./plugins/academy-stage.cjs
+
+provider:
+  name: aws
+  runtime: python3.11
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-1'}
+  memorySize: 256
+  timeout: 15
+  logRetentionInDays: 14
+  versionFunctions: false
+  iam:
+    role: ${env:LAB_ROLE_ARN, 'arn:aws:iam::${aws:accountId}:role/LabRole'}
+  # No logs.restApi: evita crear un rol/custom resource de API Gateway en Academy.
+  environment:
+    SERVICE_NAME: ${self:service}
+    T_USUARIOS: { Ref: TUsuarios }
+    T_TOKENS: { Ref: TTokens }
+    FRONTEND_ORIGIN: ${env:FRONTEND_ORIGIN, 'http://localhost:5173'}
+    TOKEN_TTL_SECONDS: ${env:TOKEN_TTL_SECONDS, '3600'}
+  apiGateway:
+    shouldStartNameWithService: true
+
+custom:
+  throttling:
+    burstLimit: 20
+    rateLimit: 10
+  cors:
+    origin: ${env:FRONTEND_ORIGIN, 'http://localhost:5173'}
+    headers: [Content-Type, Authorization]
+    allowCredentials: false
+  authorizer:
+    name: autorizar
+    type: token
+    identitySource: method.request.header.Authorization
+    resultTtlInSeconds: 0
+
+package:
+  patterns:
+    - '!**'
+    - auth/**/*.py
+    - common.py
+    - handler.py
+
+functions:
+  autorizar:
+    name: ${self:service}-${sls:stage}-autorizar
+    handler: auth.handlers.authorizer.handler
+  registro:
+    handler: auth.handlers.register.handler
+    environment:
+      TENANT_INVITE_CODES: ${env:TENANT_INVITE_CODES}
+    events:
+      - http:
+          path: auth/register
+          method: post
+          cors: ${self:custom.cors}
+      - http:
+          path: auth/registro
+          method: post
+          cors: ${self:custom.cors}
+  login:
+    handler: auth.handlers.login.handler
+    events:
+      - http:
+          path: auth/login
+          method: post
+          cors: ${self:custom.cors}
+  me:
+    handler: auth.handlers.me.handler
+    events:
+      - http:
+          path: auth/me
+          method: get
+          cors: ${self:custom.cors}
+          authorizer: ${self:custom.authorizer}
+  logout:
+    handler: auth.handlers.logout.handler
+    events:
+      - http:
+          path: auth/logout
+          method: post
+          cors: ${self:custom.cors}
+          authorizer: ${self:custom.authorizer}
+  listarUsuarios:
+    handler: auth.handlers.users.handler
+    events:
+      - http:
+          path: auth/usuarios
+          method: get
+          cors: ${self:custom.cors}
+          authorizer: ${self:custom.authorizer}
+
+resources:
+  Resources:
+    TUsuarios:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        # El seed global escribe sp_usuarios; los otros servicios usan nombres fijos.
+        TableName: sp_usuarios
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - { AttributeName: tenant_id, AttributeType: S }
+          - { AttributeName: user_id, AttributeType: S }
+          - { AttributeName: email, AttributeType: S }
+        KeySchema:
+          - { AttributeName: tenant_id, KeyType: HASH }
+          - { AttributeName: user_id, KeyType: RANGE }
+        GlobalSecondaryIndexes:
+          - IndexName: gsi_email
+            KeySchema:
+              - { AttributeName: tenant_id, KeyType: HASH }
+              - { AttributeName: email, KeyType: RANGE }
+            Projection: { ProjectionType: ALL }
+    TTokens:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:service}-${sls:stage}-t_tokens_acceso
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - { AttributeName: token_hash, AttributeType: S }
+        KeySchema:
+          - { AttributeName: token_hash, KeyType: HASH }
+        TimeToLiveSpecification:
+          AttributeName: expires_at
+          Enabled: true
+    GatewayResponse4XX:
+      Type: AWS::ApiGateway::GatewayResponse
+      Properties:
+        ResponseType: DEFAULT_4XX
+        RestApiId: { Ref: ApiGatewayRestApi }
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'${self:custom.cors.origin}'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,Authorization'"
+    GatewayResponse5XX:
+      Type: AWS::ApiGateway::GatewayResponse
+      Properties:
+        ResponseType: DEFAULT_5XX
+        RestApiId: { Ref: ApiGatewayRestApi }
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'${self:custom.cors.origin}'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,Authorization'"
+  Outputs:
+    AuthorizerArn:
+      Value: { Fn::GetAtt: [AutorizarLambdaFunction, Arn] }
+      Export:
+        Name: ${self:service}-${sls:stage}-AuthorizerArn
+    UsersTableName:
+      Value: { Ref: TUsuarios }
+    TokensTableName:
+      Value: { Ref: TTokens }
+    AuthApiUrl:
+      Value:
+        Fn::Sub: https://${ApiGatewayRestApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}/${sls:stage}

@@ -1,0 +1,2 @@
+# Solo para ejecutar scripts locales; Lambda ya incluye boto3.
+boto3>=1.34,<2
