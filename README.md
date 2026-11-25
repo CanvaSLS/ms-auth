@@ -1,4 +1,4 @@
-# StudyPulse · ms-auth
+# CanvaSLS · ms-auth
 
 Servicio de autenticación con Lambda (Python 3.11), API Gateway REST y DynamoDB.
 Preparado para AWS Academy con **LabRole**, Serverless Framework 3.40.0 y los

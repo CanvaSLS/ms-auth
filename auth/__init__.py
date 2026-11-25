@@ -1,1 +1,1 @@
-"""Autenticación multi-tenant de StudyPulse."""
+"""Autenticación multi-tenant de CanvaSLS."""
